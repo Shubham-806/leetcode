@@ -1,0 +1,44 @@
+name: LeetCode Cloud Sync
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # every 10 minutes
+  workflow_dispatch:          # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run sync script
+        id: sync
+        env:
+          LEETCODE_SESSION: ${{ secrets.LEETCODE_SESSION }}
+          LEETCODE_CSRF_TOKEN: ${{ secrets.LEETCODE_CSRF_TOKEN }}
+          LEETCODE_USERNAME: ${{ secrets.LEETCODE_USERNAME }}
+        run: |
+          set +e
+          python scripts/sync.py
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push new solutions
+        if: steps.sync.outputs.exit_code == '10'
+        run: |
+          git config user.name "leetcode-sync-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add solutions/ data/synced.json
+          git commit -m "chore: sync new LeetCode solution(s) - $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
