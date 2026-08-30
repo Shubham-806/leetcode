@@ -83,6 +83,30 @@ def get_session():
     return session, username
 
 
+def verify_login(session: requests.Session):
+    """Check whether the LEETCODE_SESSION/csrftoken cookies are actually authenticated."""
+    query = """
+    query globalData {
+      userStatus {
+        isSignedIn
+        username
+      }
+    }
+    """
+    resp = session.post(LEETCODE_GRAPHQL_URL, json={"query": query}, timeout=30)
+    try:
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"Login check request failed: {e}")
+        return False
+
+    status = data.get("data", {}).get("userStatus") or {}
+    signed_in = status.get("isSignedIn", False)
+    print(f"Login check: isSignedIn={signed_in}, username={status.get('username')}")
+    return signed_in
+
+
 def fetch_recent_accepted(session: requests.Session, username: str, limit: int = 20):
     query = """
     query recentAcSubmissions($username: String!, $limit: Int!) {
@@ -122,10 +146,21 @@ def fetch_submission_code(session: requests.Session, submission_id: str):
         json={"query": query, "variables": {"submissionId": int(submission_id)}},
         timeout=30,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        print(f"  HTTP error for submission {submission_id}: {e} | body: {resp.text[:500]}")
+        return None
+
     data = resp.json()
+
+    if "errors" in data:
+        print(f"  GraphQL error for submission {submission_id}: {data['errors']}")
+        return None
+
     details = data.get("data", {}).get("submissionDetails")
     if not details:
+        print(f"  Empty submissionDetails for {submission_id}. Raw response: {json.dumps(data)[:500]}")
         return None
     return details.get("code")
 
@@ -136,6 +171,16 @@ def safe_slug(slug: str) -> str:
 
 def sync():
     session, username = get_session()
+
+    if not verify_login(session):
+        print(
+            "Not authenticated. LEETCODE_SESSION / LEETCODE_CSRF_TOKEN are likely "
+            "expired, mistyped, or LeetCode blocked this request (e.g. bot protection "
+            "on datacenter IPs). Re-grab fresh cookies from DevTools and update the "
+            "repo secrets."
+        )
+        sys.exit(1)
+
     manifest = load_manifest()
     synced_ids = set(manifest.get("synced_ids", []))
 
